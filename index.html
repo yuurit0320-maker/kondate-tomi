@@ -63,13 +63,16 @@
   ul{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:10px;}
   .card{
     background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-    box-shadow:var(--shadow);padding:14px 16px;display:flex;align-items:center;gap:14px;
+    box-shadow:var(--shadow);padding:14px 16px;
     position:relative;overflow:hidden;
+    display:flex;flex-direction:column;
   }
   .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;}
   .card.fresh::before{background:var(--fresh);}
   .card.mid::before{background:var(--mid);}
   .card.stale::before{background:var(--stale);}
+
+  .card-row{display:flex;align-items:center;gap:14px;}
 
   .info{flex:1;min-width:0;}
   .name{font-size:17px;font-weight:600;letter-spacing:-.01em;}
@@ -89,6 +92,15 @@
     transition:transform .08s ease,opacity .15s;letter-spacing:.02em;
   }
   .cook:active{transform:scale(.94);opacity:.85;}
+
+  .remind-btn{
+    margin-top:10px;border:1px solid var(--line);background:transparent;color:var(--ink-soft);
+    font-size:12.5px;font-weight:600;padding:9px 12px;border-radius:11px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;gap:6px;
+    transition:opacity .15s,transform .08s;
+  }
+  .remind-btn:active{opacity:.6;transform:scale(.98);}
+  .remind-ico{font-size:13px;}
 
   /* empty */
   .empty{text-align:center;padding:50px 20px;color:var(--ink-soft);}
@@ -192,6 +204,7 @@
   <h2>メニュー</h2>
   <ul class="menu-list">
     <li id="m-bulk"><span class="menu-ico">≣</span><div><div>料理を一括追加</div><div class="menu-desc">複数の料理名をまとめて登録</div></div></li>
+    <li id="m-remind"><span class="menu-ico">⏰</span><div><div>リマインダー連携の設定</div><div class="menu-desc">ショートカット名を設定</div></div></li>
     <li id="m-export"><span class="menu-ico">↧</span><div><div>バックアップを書き出す</div><div class="menu-desc">全データをファイルに保存</div></div></li>
     <li id="m-import"><span class="menu-ico">↥</span><div><div>バックアップを読み込む</div><div class="menu-desc">ファイルからデータを復元</div></div></li>
   </ul>
@@ -209,6 +222,20 @@
   <div class="sheet-actions">
     <button class="btn btn-ghost" id="bulkCancel">キャンセル</button>
     <button class="btn btn-primary" id="bulkSave">まとめて追加</button>
+  </div>
+</div>
+
+<div class="sheet" id="remindSheet">
+  <div class="grab"></div>
+  <h2>リマインダー連携の設定</h2>
+  <label for="f-shortcut">iOSショートカットの名前</label>
+  <input id="f-shortcut" type="text" placeholder="材料をリマインダーへ" autocomplete="off" autocapitalize="off">
+  <div class="hint">
+    iPhoneの「ショートカット」アプリで作成したショートカット名を、ここで指定した名前と<strong>完全に一致</strong>させてください。料理カードの「材料をリマインダーへ」ボタンはこの名前でショートカットを起動します。ショートカットの作り方は別途お渡しした手順書をご確認ください。
+  </div>
+  <div class="sheet-actions">
+    <button class="btn btn-ghost" id="remindCancel">キャンセル</button>
+    <button class="btn btn-primary" id="remindSave">保存</button>
   </div>
 </div>
 
@@ -303,17 +330,46 @@ async function render(){
       await put(d);render();
     };
 
-    li.append(info,since,cook);
+    const row=document.createElement('div');
+    row.className='card-row';
+    row.append(info,since,cook);
+    li.append(row);
+
+    if(d.ingredients&&d.ingredients.length){
+      const remind=document.createElement('button');
+      remind.className='remind-btn';
+      remind.innerHTML='<span class="remind-ico">⏰</span>材料をリマインダーへ';
+      remind.onclick=e=>{e.stopPropagation();sendToReminders(d);};
+      li.append(remind);
+    }
+
     list.append(li);
   }
+}
+
+/* リマインダー連携：iOSショートカットをURLスキームで起動 */
+function getShortcutName(){
+  return localStorage.getItem('kondate_shortcut_name')||'材料をリマインダーへ';
+}
+function setShortcutName(name){
+  localStorage.setItem('kondate_shortcut_name',name);
+}
+function sendToReminders(d){
+  const text=d.ingredients.join('\n');
+  const name=encodeURIComponent(getShortcutName());
+  const input=encodeURIComponent(text);
+  const url='shortcuts://run-shortcut?name='+name+'&input=text&text='+input;
+  window.location.href=url;
 }
 
 /* sheet control */
 const scrim=document.getElementById('scrim'),sheet=document.getElementById('sheet');
 const menuSheet=document.getElementById('menuSheet'),bulkSheet=document.getElementById('bulkSheet');
+const remindSheet=document.getElementById('remindSheet');
 const fName=document.getElementById('f-name'),fIng=document.getElementById('f-ing');
 const fBulk=document.getElementById('f-bulk');
-const allSheets=[sheet,menuSheet,bulkSheet];
+const fShortcut=document.getElementById('f-shortcut');
+const allSheets=[sheet,menuSheet,bulkSheet,remindSheet];
 function openSheet(s){scrim.classList.add('on');s.classList.add('on');}
 function closeAll(){scrim.classList.remove('on');allSheets.forEach(s=>s.classList.remove('on'));editingId=null;}
 const closeSheet=closeAll;
@@ -355,6 +411,17 @@ async function removeDish(){
 /* menu + bulk + backup */
 function openMenu(){openSheet(menuSheet);}
 function openBulk(){menuSheet.classList.remove('on');fBulk.value='';openSheet(bulkSheet);setTimeout(()=>fBulk.focus(),300);}
+function openRemindSettings(){
+  menuSheet.classList.remove('on');
+  fShortcut.value=getShortcutName();
+  openSheet(remindSheet);
+  setTimeout(()=>fShortcut.focus(),300);
+}
+function saveRemindSettings(){
+  const name=fShortcut.value.trim();
+  setShortcutName(name||'材料をリマインダーへ');
+  closeAll();
+}
 async function bulkSave(){
   const names=fBulk.value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(names.length===0){closeAll();return;}
@@ -424,8 +491,11 @@ document.getElementById('delBtn').onclick=removeDish;
 document.getElementById('menuBtn').onclick=openMenu;
 document.getElementById('menuClose').onclick=closeAll;
 document.getElementById('m-bulk').onclick=openBulk;
+document.getElementById('m-remind').onclick=openRemindSettings;
 document.getElementById('m-export').onclick=exportData;
 document.getElementById('m-import').onclick=importData;
+document.getElementById('remindCancel').onclick=closeAll;
+document.getElementById('remindSave').onclick=saveRemindSettings;
 document.getElementById('bulkCancel').onclick=closeAll;
 document.getElementById('bulkSave').onclick=bulkSave;
 scrim.onclick=closeAll;
